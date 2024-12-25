@@ -1,0 +1,22 @@
+{
+  "name": "secret-santa",
+  "version": "0.0.1",
+  "description": "Gets your Secret Santa going",
+  "main": "index.ts",
+  "scripts": {
+    "test": "test"
+  },
+  "author": "daberg",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.10.2",
+    "prettier": "3.4.2",
+    "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "effect": "^3.11.9",
+    "express": "^4.21.2",
+    "uuid": "^11.0.3"
+  }
+}
