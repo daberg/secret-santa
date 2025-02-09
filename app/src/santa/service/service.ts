@@ -7,13 +7,26 @@ import {
   SantaNotFound,
 } from "../errors"
 import { Santa } from "../model/santa"
-import { RepoSanta, SantaRepository } from "../repository/repository"
+import {
+  RepoParticipant,
+  RepoSanta,
+  SantaRepository,
+} from "../repository/repository"
 import { Match } from "../model/match"
 import { drawMatches } from "../../lib/draw"
+import { hashSecret } from "../../lib/crypto"
 
 export interface CreateSantaInput {
   name: string
-  organiserName: string
+  organiser: {
+    name: string
+    secret: string
+  }
+}
+
+export interface ParticipantInput {
+  name: string
+  secret: string
 }
 
 export interface SantaService {
@@ -21,7 +34,7 @@ export interface SantaService {
   readonly createSanta: (createInput: CreateSantaInput) => Effect.Effect<Santa>
   readonly addParticipant: (
     santaId: Id,
-    participantName: string,
+    participantInput: ParticipantInput,
   ) => Effect.Effect<
     Santa,
     SantaNotFound | InvalidSantaState | DuplicateParticipant
@@ -45,11 +58,18 @@ export interface SantaService {
   ) => Effect.Effect<Santa, SantaNotFound | InvalidSantaState>
 }
 
-const makeRepoParticipant = (name: string) => ({
-  id: makeId(),
-  name,
-  receiverName: null,
-})
+const makeRepoParticipant = (participantData: {
+  name: string
+  secret: string
+}): Effect.Effect<RepoParticipant> =>
+  Effect.promise(() => hashSecret(participantData.name)).pipe(
+    Effect.map((secretHash) => ({
+      id: makeId(),
+      name: participantData.name,
+      secretHash,
+      receiverName: null,
+    })),
+  )
 
 const fromRepoSanta = (repoSanta: RepoSanta): Santa => {
   const base = {
@@ -59,6 +79,7 @@ const fromRepoSanta = (repoSanta: RepoSanta): Santa => {
     participants: repoSanta.participants.map((p) => ({
       id: p.id,
       name: p.name,
+      secretHash: p.secretHash,
     })),
   }
 
@@ -84,49 +105,49 @@ const fromRepoSanta = (repoSanta: RepoSanta): Santa => {
 
 export const makeSantaService = (repo: SantaRepository): SantaService => ({
   getSanta: (id) => pipe(id, repo.getSanta, Effect.map(fromRepoSanta)),
-  createSanta: (createInput) => {
-    const organiser = makeRepoParticipant(createInput.organiserName)
-
-    return pipe(
-      repo.createSanta({
-        id: makeId(),
-        name: createInput.name,
-        organiserId: organiser.id,
-        participants: [organiser],
-        state: "undrawn",
-      }),
+  createSanta: (createInput) =>
+    pipe(
+      createInput.organiser,
+      makeRepoParticipant,
+      Effect.flatMap((organiser) =>
+        repo.createSanta({
+          id: makeId(),
+          name: createInput.name,
+          organiserId: organiser.id,
+          participants: [organiser],
+          state: "undrawn",
+        }),
+      ),
       Effect.map(fromRepoSanta),
-    )
-  },
-  addParticipant: (santaId, participantName) => {
-    return pipe(
-      santaId,
-      repo.getSanta,
-      Effect.andThen((santa) => {
-        if (santa.state !== "undrawn") {
-          return Effect.fail(
-            new InvalidSantaState({
-              id: santaId,
-              operation: "addParticipant",
-              state: santa.state,
-            }),
-          )
-        }
+    ),
+  addParticipant: (santaId, participantInput) =>
+    Effect.gen(function* () {
+      const santa = yield* repo.getSanta(santaId)
 
-        return santa.participants.find((p) => p.name === participantName)
-          ? Effect.fail(new DuplicateParticipant({ participantName }))
-          : repo.updateSanta(santa.id, {
-              participants: [
-                ...santa.participants,
-                makeRepoParticipant(participantName),
-              ],
-            })
-      }),
-      Effect.map(fromRepoSanta),
-    )
-  },
-  removeParticipant: (santaId, participantName) => {
-    return pipe(
+      if (santa.state !== "undrawn") {
+        return yield* Effect.fail(
+          new InvalidSantaState({
+            id: santaId,
+            operation: "addParticipant",
+            state: santa.state,
+          }),
+        )
+      }
+
+      if (santa.participants.find((p) => p.name === participantInput.name)) {
+        return yield* Effect.fail(
+          new DuplicateParticipant({ participantName: participantInput.name }),
+        )
+      }
+
+      const newParticipant = yield* makeRepoParticipant(participantInput)
+
+      return yield* repo.updateSanta(santa.id, {
+        participants: [...santa.participants, newParticipant],
+      })
+    }).pipe(Effect.map(fromRepoSanta)),
+  removeParticipant: (santaId, participantName) =>
+    pipe(
       santaId,
       repo.getSanta,
       Effect.andThen((santa) => {
@@ -149,10 +170,9 @@ export const makeSantaService = (repo: SantaRepository): SantaService => ({
           : Effect.fail(new ParticipantNotFound({ participantName }))
       }),
       Effect.map(fromRepoSanta),
-    )
-  },
-  getMatch: (santaId, participantName) => {
-    return pipe(
+    ),
+  getMatch: (santaId, participantName) =>
+    pipe(
       santaId,
       repo.getSanta,
       Effect.andThen((santa) => {
@@ -181,10 +201,9 @@ export const makeSantaService = (repo: SantaRepository): SantaService => ({
           receiverName: participant.receiverName,
         })
       }),
-    )
-  },
-  draw: (santaId) => {
-    return pipe(
+    ),
+  draw: (santaId) =>
+    pipe(
       santaId,
       repo.getSanta,
       Effect.andThen((santa) => {
@@ -212,6 +231,5 @@ export const makeSantaService = (repo: SantaRepository): SantaService => ({
         })
       }),
       Effect.map(fromRepoSanta),
-    )
-  },
+    ),
 })

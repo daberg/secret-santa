@@ -7,6 +7,7 @@ export type RepoSantaState = "drawn" | "undrawn"
 export type RepoParticipant = {
   id: Id
   name: string
+  secretHash: string
   receiverName: string | null
 }
 
