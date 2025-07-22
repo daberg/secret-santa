@@ -20,32 +20,35 @@ export interface CreateSantaInput {
   name: string
   organiser: {
     name: string
-    secret: string
   }
 }
 
 export interface ParticipantInput {
   name: string
-  secret: string
 }
 
 export interface SantaService {
   readonly getSanta: (santaId: Id) => Effect.Effect<Santa, SantaNotFound>
-  readonly createSanta: (createInput: CreateSantaInput) => Effect.Effect<Santa>
+  readonly createSanta: (
+    createInput: CreateSantaInput,
+  ) => Effect.Effect<{ santa: Santa; organiserSecret: string }>
   readonly addParticipant: (
     santaId: Id,
     participantInput: ParticipantInput,
   ) => Effect.Effect<
-    Santa,
+    { santa: Santa; participantSecret: string },
     SantaNotFound | InvalidSantaState | DuplicateParticipant
   >
   readonly removeParticipant: (
     santaId: Id,
     participantName: string,
   ) => Effect.Effect<
-    Santa,
+    { santa: Santa },
     SantaNotFound | InvalidSantaState | ParticipantNotFound
   >
+  readonly draw: (
+    santaId: Id,
+  ) => Effect.Effect<{ santa: Santa }, SantaNotFound | InvalidSantaState>
   readonly getMatch: (
     santaId: Id,
     participantName: string,
@@ -53,16 +56,13 @@ export interface SantaService {
     Match,
     SantaNotFound | InvalidSantaState | ParticipantNotFound
   >
-  readonly draw: (
-    santaId: Id,
-  ) => Effect.Effect<Santa, SantaNotFound | InvalidSantaState>
 }
 
 const makeRepoParticipant = (participantData: {
   name: string
   secret: string
 }): Effect.Effect<RepoParticipant> =>
-  Effect.promise(() => hashSecret(participantData.name)).pipe(
+  Effect.promise(() => hashSecret(participantData.secret)).pipe(
     Effect.map((secretHash) => ({
       id: makeId(),
       name: participantData.name,
@@ -106,20 +106,29 @@ const fromRepoSanta = (repoSanta: RepoSanta): Santa => {
 export const makeSantaService = (repo: SantaRepository): SantaService => ({
   getSanta: (id) => pipe(id, repo.getSanta, Effect.map(fromRepoSanta)),
   createSanta: (createInput) =>
-    pipe(
-      createInput.organiser,
-      makeRepoParticipant,
-      Effect.flatMap((organiser) =>
-        repo.createSanta({
+    Effect.gen(function* () {
+      const secret = makeId()
+
+      const organiser = yield* makeRepoParticipant({
+        ...createInput.organiser,
+        secret,
+      })
+
+      const createdSanta = yield* repo
+        .createSanta({
           id: makeId(),
           name: createInput.name,
           organiserId: organiser.id,
           participants: [organiser],
           state: "undrawn",
-        }),
-      ),
-      Effect.map(fromRepoSanta),
-    ),
+        })
+        .pipe(Effect.map(fromRepoSanta))
+
+      return {
+        santa: createdSanta,
+        organiserSecret: secret,
+      }
+    }),
   addParticipant: (santaId, participantInput) =>
     Effect.gen(function* () {
       const santa = yield* repo.getSanta(santaId)
@@ -140,12 +149,24 @@ export const makeSantaService = (repo: SantaRepository): SantaService => ({
         )
       }
 
-      const newParticipant = yield* makeRepoParticipant(participantInput)
+      const secret = makeId()
 
-      return yield* repo.updateSanta(santa.id, {
-        participants: [...santa.participants, newParticipant],
+      const newParticipant = yield* makeRepoParticipant({
+        name: participantInput.name,
+        secret,
       })
-    }).pipe(Effect.map(fromRepoSanta)),
+
+      const updatedSanta = yield* repo
+        .updateSanta(santa.id, {
+          participants: [...santa.participants, newParticipant],
+        })
+        .pipe(Effect.map(fromRepoSanta))
+
+      return {
+        santa: updatedSanta,
+        participantSecret: secret,
+      }
+    }),
   removeParticipant: (santaId, participantName) =>
     pipe(
       santaId,
@@ -166,10 +187,12 @@ export const makeSantaService = (repo: SantaRepository): SantaService => ({
         )
 
         return participants.length < santa.participants.length
-          ? repo.updateSanta(santaId, { participants })
+          ? repo.updateSanta(santaId, { participants }).pipe(
+              Effect.map(fromRepoSanta),
+              Effect.map((santa) => ({ santa })),
+            )
           : Effect.fail(new ParticipantNotFound({ participantName }))
       }),
-      Effect.map(fromRepoSanta),
     ),
   getMatch: (santaId, participantName) =>
     pipe(
@@ -231,5 +254,6 @@ export const makeSantaService = (repo: SantaRepository): SantaService => ({
         })
       }),
       Effect.map(fromRepoSanta),
+      Effect.map((santa) => ({ santa })),
     ),
 })
