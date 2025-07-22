@@ -10,15 +10,15 @@
   "license": "MIT",
   "devDependencies": {
     "@types/bcrypt": "^5.0.2",
-    "@types/express": "^5.0.0",
-    "@types/node": "^22.10.2",
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.16.5",
     "prettier": "3.4.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.8.3"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",
-    "effect": "^3.11.9",
+    "effect": "^3.16.16",
     "express": "^4.21.2",
-    "uuid": "^11.0.3"
+    "uuid": "^11.1.0"
   }
 }
